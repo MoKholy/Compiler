@@ -1,0 +1,29 @@
+/* Sample C code with comments */
+
+int main() {
+    // This is a single-line comment
+    printf ("Hello, world!\n");
+
+    /*
+     * This is a multi-line comment
+     */
+
+    int x = 42 ;
+    float y = 3.14 ;
+    return 0;
+}
+
+if ( x == 42 ) {
+    printf ("x is 42\n");
+} else {
+    printf ("x is not 42\n");
+}
+
+while ( y < 4.0 ) {
+    y = y + 1.0 ;
+}
+
+/* Invalid tokens and errors */
+12abc // Invalid identifier
+3.14eX // Invalid NUM format
+@variable // Invalid ID format
