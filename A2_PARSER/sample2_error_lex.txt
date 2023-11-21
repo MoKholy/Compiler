@@ -1,0 +1,17 @@
+Program 1
+ID 1
+{ 1
+int 2
+ID 2
+; 2
+int 3
+ID 3
+; 3
+float 4
+ID 4
+; 4
+ID 5
++ 5
+ID 5
+; 5
+} 6

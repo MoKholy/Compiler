@@ -1,0 +1,21 @@
+Program X {
+
+int a;
+int b;
+float c;
+a = 10;
+b = 9;
+
+if (a > b) {
+
+	c = a + b;
+
+} else {
+
+	c = a;
+} else {
+	
+	c = a+5;
+
+}
+}

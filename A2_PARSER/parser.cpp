@@ -5,7 +5,14 @@
 #include <sstream>
 using namespace std;
 
-
+parser::parser(const std::string&input_file_path_, const std::string&output_filepath_) {
+	input_file_path = input_file_path_;
+	output_filepath = output_filepath_;
+	curr_token_idx = 0;
+	// get tokens
+	tokens_vector = get_tokens();
+	curr_token = get_next_token();
+}
 std::unique_ptr<std::vector<Token>> parser::get_tokens() {
 
 	std::unique_ptr<std::vector<Token>> tokens_vector_ = std::make_unique<std::vector<Token>>();
@@ -21,38 +28,25 @@ std::unique_ptr<std::vector<Token>> parser::get_tokens() {
 	else {
 		string line;
 		while (getline(input, line)) {
-			//cout << line << endl;
-			// split line into token components
 			std::istringstream iss(line);
 			string type;
 			string val;
-			string line_num;
-
-			/*if (!(iss >> type >> val >> line_num)) {
-				cout << "Error: could not read line" << endl;
-				return nullptr;
-			}*/
-			if (!(iss >> val)) {
+			int line_num;
+			if (!(iss >> val >> line_num)) {
 				cout << "Error: could not read line" << endl;
 				return nullptr;
 			}
 			else {
-				//cout << type << " " << val << " " << line_num << endl;
+				cout << val << " " << line_num << endl;
 				//cout << val << endl;
 				Token token;
 				//token.type = type;
 				token.val = val;
-				//token.line_num = stoi(line_num);
+				token.line_num = to_string(line_num);
 				tokens_vector_->push_back(token);
 			}
 		}
 		input.close();
-
-		// print tokens
-		//for (auto token : *tokens_vector) {
-		//	//cout << token.val << " " << token.type << " " << token.line_num << endl;
-		//	cout << token.val << endl;
-		//}
 	}
 
 	return tokens_vector_;
@@ -68,18 +62,8 @@ std::optional<Token> parser::get_next_token() {
 }
 
 void parser::run() {
-	//ofstream ofs;
-	//ofs.open(output_filepath.c_str(), ofstream::app);
 
-	//// check if file is open
-	//if (!ofs.is_open()) {
-	//	cout << "Error: could not open file" << endl;
-	//	return;
-	//}
-	//else {
-	//	parse();
-	//}
-	//ofs.close();
+	// read tokens first 
 	cout << "Parsing..." << endl;
 	parse();
 	cout << "Parsing Successful" << endl;
@@ -90,53 +74,35 @@ void parser::parse() {
 	program();
 }
 
-bool parser::match(const std::vector<std::string>& expectedTokens, const std::string& token) {
+bool parser::match(const std::vector<std::string>& expectedTokens, const std::string& token, const std::string &line_num) {
 	try {
 		// check if token in expectedToken vector
 		for (auto exp_tok : expectedTokens) {
 			if (exp_tok == token) {
 				cout << "matched " << token << " expected: " << exp_tok << endl;
+				// advance token
+				curr_token = get_next_token();
 				return true;
 			}
 		}
-
-		throw SyntaxError(expectedTokens, token);
+		throw SyntaxError(expectedTokens, token, line_num);
 	}
 	catch (SyntaxError& ex) {
-		std::cout << ex.what() << endl;
+		std::cerr << ex.what() << endl;
+		exit(0);
 	}
 	return true;
-
-	//ofstream out;
-	//out.open(output_filepath.c_str(), ios::app);
-
-	//if (out.is_open()) {
-
-	//	try {
-	//		// check if token in expectedToken vector
-	//		for (auto exp_tok : expectedTokens) {
-	//			if (exp_tok == token) {
-	//				return true;
-	//			}
-	//		}
-
-	//		throw SyntaxError(expectedTokens, token);
-	//	}
-	//	catch (SyntaxError& ex) {
-	//		std::cout << ex.what() << endl;
-	//	}
-	//}
-	//else {
-	//	std::cout << "File not opened" << std::endl;
-	//}
 }
-bool parser::match(const std::string& expectedToken, const std::string& token) {
+
+bool parser::match(const std::string& expectedToken, const std::string& token, const std::string& line_num) {
 	std::vector<std::string> expectedTokens = { expectedToken };
-	return match(expectedTokens, token);
+	return match(expectedTokens, token, line_num);
 }
+
 bool parser::unput_token() {
 	if (curr_token_idx > 0) {
 		curr_token_idx--;
+		curr_token = (*tokens_vector)[curr_token_idx];
 		return true;
 	}
 	else {
@@ -147,29 +113,24 @@ bool parser::unput_token() {
 bool parser::program() {
 	cout << "program" << endl;
 	// program -> Program ID { declaration-list statement-list}
-	auto curr_token = get_next_token();
-
 	cout << "curr_token: " << curr_token.value().val << endl;
 	if (curr_token.has_value()) {
-		match("Program", curr_token.value().val);
+		match("Program", curr_token.value().val, curr_token.value().line_num);
 	}
 
-	curr_token = get_next_token();
+	if (curr_token.has_value()) {
+		match("ID", curr_token.value().val, curr_token.value().line_num);
+	}
 
 	if (curr_token.has_value()) {
-		match("ID", curr_token.value().val);
-	}
-	curr_token = get_next_token();
-	if (curr_token.has_value()) {
-		match("{", curr_token.value().val);
+		match("{", curr_token.value().val, curr_token.value().line_num);
 	}
 	declaration_list();
 	cout << "matched declaration_list" << endl;
 	statement_list();
 
-	curr_token = get_next_token();
 	if (curr_token.has_value()) {
-		match("}", curr_token.value().val);
+		match("}", curr_token.value().val, curr_token.value().line_num);
 	}
 	cout << "matched }" << endl;
 	return true;
@@ -185,12 +146,10 @@ bool parser::declaration_list() {
 bool parser::declaration_list_prime() {
 	cout << "declaration_list_prime" << endl;
 	declaration();
-	auto curr_token = get_next_token();
 	while (curr_token.has_value() && (curr_token.value().val == "int" || curr_token.value().val == "float")) {
 		declaration();
-		curr_token = get_next_token();
 	}
-	unput_token();
+	//unput_token(); //epsilon
 	return true;
 }
 
@@ -203,9 +162,8 @@ bool parser::declaration() {
 bool parser::var_declaration() {
 	cout << "var_declaration" << endl;
 	type_specifier();
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
-		match("ID", curr_token.value().val);
+		match("ID", curr_token.value().val, curr_token.value().line_num);
 	}
 	var_declaration_prime();
 	return true;
@@ -213,52 +171,49 @@ bool parser::var_declaration() {
 
 bool parser::var_declaration_prime() {
 	cout << "var_declaration_prime" << endl;
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == ";") {
-			match(";", curr_token.value().val);
+			match(";", curr_token.value().val, curr_token.value().line_num);
 		}
 		else if (curr_token.value().val == "[") {
-			match("[", curr_token.value().val);
+			match("[", curr_token.value().val, curr_token.value().line_num);
 			curr_token = get_next_token();
 			if (curr_token.has_value()) {
-				match("NUM", curr_token.value().val);
+				match("NUM", curr_token.value().val, curr_token.value().line_num);
 			}
 			curr_token = get_next_token();
 			if (curr_token.has_value()) {
-				match("]", curr_token.value().val);
+				match("]", curr_token.value().val, curr_token.value().line_num);
 			}
 			curr_token = get_next_token();
 			if (curr_token.has_value()) {
-				match(";", curr_token.value().val);
+				match(";", curr_token.value().val, curr_token.value().line_num);
 			}
 		}
 	}
-	else {
+	/*else {
 		cout << "unput_token" << endl;
 		unput_token();
-	}
+	}*/
 	return true;
 }
 
 bool parser::type_specifier() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == "int") {
-			match("int", curr_token.value().val);
+			match("int", curr_token.value().val, curr_token.value().line_num);
 		}
 		else if (curr_token.value().val == "float") {
-			match("float", curr_token.value().val);
+			match("float", curr_token.value().val, curr_token.value().line_num);
 		}
 	}
 	return true;
 }
 
 bool parser::params() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == "void") {
-			match("void", curr_token.value().val);
+			match("void", curr_token.value().val, curr_token.value().line_num);
 			return true;
 		}
 		else {
@@ -276,15 +231,11 @@ bool parser::param_list() {
 }
 
 bool parser::param_list_prime() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == ",") {
-			match(",", curr_token.value().val);
+			match(",", curr_token.value().val, curr_token.value().line_num);
 			param();
 			param_list_prime();
-		}
-		else {
-			unput_token();
 		}
 	}
 	return true;
@@ -292,303 +243,255 @@ bool parser::param_list_prime() {
 
 bool parser::param() {
 	type_specifier();
-	auto curr_token = get_next_token();
-	match("ID", curr_token.value().val);
+	match("ID", curr_token.value().val, curr_token.value().line_num);
 	param_prime();
 	return true;
 }
 bool parser::param_prime() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == "[") {
-			match("[", curr_token.value().val);
-			match("]", curr_token.value().val);
+			match("[", curr_token.value().val, curr_token.value().line_num);
+			match("]", curr_token.value().val, curr_token.value().line_num);
 		}
 	}
-	else {
+	/*else {
 		unput_token();
-	}
+	}*/
 	return true;
 }
 
 bool parser::compound_stmt() {
-	auto curr_token = get_next_token();
+	cout << "compound_stmt" << endl;
 	if (curr_token.has_value()) {
-		match("{", curr_token.value().val);
+		match("{", curr_token.value().val, curr_token.value().line_num);
 		statement_list();
-		match("}", curr_token.value().val);
+		match("}", curr_token.value().val, curr_token.value().line_num);
 	}
-	else {
-		throw SyntaxError({ "{" }, curr_token.value().val);
-	}
+	return true;
 }
 
 bool parser::statement_list() {
-	auto curr_token = get_next_token();
 	while (curr_token.has_value() && (curr_token.value().val == "if" || curr_token.value().val == "while" || curr_token.value().val == "return" || curr_token.value().val == "ID" || curr_token.value().val == "{")) {
 		statement();
-		curr_token = get_next_token();
 	}
-	unput_token(); //epsilon
 	return true;
 }
 
 bool parser::statement() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == "if") {
-			unput_token();
 			selection_stmt();
 		}
 		else if (curr_token.value().val == "while") {
-			unput_token();
 			iteration_stmt();
 		}
 		else if (curr_token.value().val == "ID") {
-			unput_token();
 			assignment_stmt();
 		}
 		else if (curr_token.value().val == "{") {
-			unput_token();
 			compound_stmt();
 		}
 		else {
-			throw SyntaxError({ "if", "while", "ID", "{" }, curr_token.value().val);
+			throw SyntaxError({ "if", "while", "ID", "{" }, curr_token.value().val, curr_token.value().line_num);
 		}
 	}
-	else {
-		throw SyntaxError({ "if", "while", "ID", "{" }, curr_token.value().val);
-	}
+	return true;
 }
 
 bool parser::selection_stmt() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
-		match("if", curr_token.value().val);
-		match("(", curr_token.value().val);
+		match("if", curr_token.value().val, curr_token.value().line_num);
+		match("(", curr_token.value().val, curr_token.value().line_num);
 		expression();
-		match(")", curr_token.value().val);
+		match(")", curr_token.value().val, curr_token.value().line_num);
 		statement();
 		selection_stmt_prime();
 	}
 	else {
-		throw SyntaxError({ "if" }, curr_token.value().val);
+		throw SyntaxError({ "if" }, "Nothing", curr_token.value().line_num);
 	}
 }
 
 bool parser::selection_stmt_prime() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == "else") {
-			match("else", curr_token.value().val);
+			match("else", curr_token.value().val, curr_token.value().line_num);
 			statement();
-		}
-		else {
-			unput_token();
 		}
 	}
 	return true;
 }
 
 bool parser::iteration_stmt() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
-		match("while", curr_token.value().val);
-		match("(", curr_token.value().val);
+		match("while", curr_token.value().val, curr_token.value().line_num);
+		match("(", curr_token.value().val, curr_token.value().line_num);
 		expression();
-		match(")", curr_token.value().val);
+		match(")", curr_token.value().val, curr_token.value().line_num);
 		statement();
 	}
 	else {
-		throw SyntaxError({ "while" }, curr_token.value().val);
+		throw SyntaxError({ "while" }, "Nothing", curr_token.value().line_num);
 	}
 }
 
 bool parser::assignment_stmt() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
 		var();
-		match("=", curr_token.value().val);
+		match("=", curr_token.value().val, curr_token.value().line_num);
 		expression();
+		match(";", curr_token.value().val, curr_token.value().line_num);
 	}
 	else {
-		throw SyntaxError({ "ID" }, curr_token.value().val);
+		throw SyntaxError({ "ID" }, "Nothing", curr_token.value().line_num);
 	}
 }
 bool parser::var() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
-		match("ID", curr_token.value().val);
+		match("ID", curr_token.value().val, curr_token.value().line_num);
 		var_prime();
 	}
 	else {
-		throw SyntaxError({ "ID" }, curr_token.value().val);
+		throw SyntaxError({ "ID" }, "Nothing", curr_token.value().line_num);
 	}
 }
 bool parser::var_prime() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == "[") {
-			match("[", curr_token.value().val);
+			match("[", curr_token.value().val, curr_token.value().line_num);
 			expression();
-			match("]", curr_token.value().val);
-		}
-		else {
-			unput_token();
+			match("]", curr_token.value().val, curr_token.value().line_num);
 		}
 	}
 	return true;
 }
 
 bool parser::expression() {
+	cout << "expression" << endl;
 	additive_expression();
 	expression_prime();
 	return true;
 }
 
 bool parser::expression_prime() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == "<=" || curr_token.value().val == "<" || curr_token.value().val == ">" || curr_token.value().val == ">=" || curr_token.value().val == "==" || curr_token.value().val == "!=") {
-			unput_token();
 			relop();
 			additive_expression();
-		}
-		else {
-			unput_token();
 		}
 	}
 	return true;
 }
 
 bool parser::relop() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == "<=") {
-			match("<=", curr_token.value().val);
+			match("<=", curr_token.value().val, curr_token.value().line_num);
 		}
 		else if (curr_token.value().val == "<") {
-			match("<", curr_token.value().val);
+			match("<", curr_token.value().val, curr_token.value().line_num);
 		}
 		else if (curr_token.value().val == ">") {
-			match(">", curr_token.value().val);
+			match(">", curr_token.value().val, curr_token.value().line_num);
 		}
 		else if (curr_token.value().val == ">=") {
-			match(">=", curr_token.value().val);
+			match(">=", curr_token.value().val, curr_token.value().line_num);
 		}
 		else if (curr_token.value().val == "==") {
-			match("==", curr_token.value().val);
+			match("==", curr_token.value().val, curr_token.value().line_num);
 		}
 		else if (curr_token.value().val == "!=") {
-			match("!=", curr_token.value().val);
+			match("!=", curr_token.value().val, curr_token.value().line_num);
 		}
 		else {
-			throw SyntaxError({ "<=", "<", ">", ">=", "==", "!=" }, curr_token.value().val);
+			throw SyntaxError({ "<=", "<", ">", ">=", "==", "!=" }, curr_token.value().val, curr_token.value().line_num);
 		}
 	}
-	else {
-		throw SyntaxError({ "<=", "<", ">", ">=", "==", "!=" }, curr_token.value().val);
-	}
+	return true;
 }
 
 bool parser::additive_expression() {
+	cout << "additive_expression" << endl;
 	term();
 	additive_expression_prime();
 	return true;
 }
 
 bool parser::additive_expression_prime() {
-	auto curr_token = get_next_token();
+	cout << "additive_expression_prime" << endl;
+	cout << "curr_token: " << curr_token.value().val << endl;
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == "+" || curr_token.value().val == "-") {
 			addop();
 			term();
 			additive_expression_prime();
 		}
-		else {
-			unput_token();
-		}
 	}
 	return true;
 }
 
 bool parser::addop() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == "+") {
-			match("+", curr_token.value().val);
+			match("+", curr_token.value().val, curr_token.value().line_num);
 		}
 		else if (curr_token.value().val == "-") {
-			match("-", curr_token.value().val);
+			match("-", curr_token.value().val, curr_token.value().line_num);
 		}
 		else {
-			throw SyntaxError({ "+", "-" }, curr_token.value().val);
+			throw SyntaxError({ "+", "-" }, curr_token.value().val, curr_token.value().line_num);
 		}
-	}
-	else {
-		throw SyntaxError({ "+", "-" }, curr_token.value().val);
 	}
 }
 
 bool parser::term() {
+	cout << "term" << endl;
 	factor();
 	term_prime();
 	return true;
 }
 
 bool parser::term_prime() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == "*" || curr_token.value().val == "/") {
 			mulop();
 			factor();
 			term_prime();
 		}
-		else {
-			unput_token();
-		}
 	}
 	return true;
 }
 
 bool parser::mulop() {
-	auto curr_token = get_next_token();
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == "*") {
-			match("*", curr_token.value().val);
+			match("*", curr_token.value().val, curr_token.value().line_num);
 		}
 		else if (curr_token.value().val == "/") {
-			match("/", curr_token.value().val);
+			match("/", curr_token.value().val, curr_token.value().line_num);
 		}
 		else {
-			throw SyntaxError({ "*", "/" }, curr_token.value().val);
+			throw SyntaxError({ "*", "/" }, curr_token.value().val, curr_token.value().line_num);
 		}
-	}
-	else {
-		throw SyntaxError({ "*", "/" }, curr_token.value().val);
 	}
 }
 
 bool parser::factor() {
-	auto curr_token = get_next_token();
+	cout << "factor" << endl;
 	if (curr_token.has_value()) {
 		if (curr_token.value().val == "(") {
-			match("(", curr_token.value().val);
+			match("(", curr_token.value().val, curr_token.value().line_num);
 			expression();
-			match(")", curr_token.value().val);
+			match(")", curr_token.value().val, curr_token.value().line_num);
 		}
 		else if (curr_token.value().val == "ID") {
-			unput_token();
 			var();
 		}
 		else if (curr_token.value().val == "NUM") {
-			match("NUM", curr_token.value().val);
+			match("NUM", curr_token.value().val, curr_token.value().line_num);
 		}
 		else {
-			throw SyntaxError({ "(", "ID", "NUM" }, curr_token.value().val);
+			throw SyntaxError({ "(", "ID", "NUM" }, curr_token.value().val, curr_token.value().line_num);
 		}
-	}
-	else {
-		throw SyntaxError({ "(", "ID", "NUM" }, curr_token.value().val);
 	}
 }
