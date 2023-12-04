@@ -1,10 +1,5 @@
 import re
 
-
-
-
-
-
 # DEFINE TOKEN TYPES AND PATTERNS
 
 TOKEN_TYPES = {
@@ -66,13 +61,19 @@ def lexer(code):
         yield Token(kind, value, lineno, char_pos)
 
 class SyntaxError(Exception):
-    def __init__(self, expected, current_token):
+    def __init__(self, expected, current_token, custom_message=None):
         self.expected = expected
         self.current_token = current_token
-        self.message = (
-            f"Syntax error: Expected {expected} but found '{current_token.type}' "
-            f"at line {current_token.line_no}, char {current_token.char_pos}"
-        )
+        if custom_message is not None:
+            self.message = custom_message
+        else:
+            if current_token is None:
+                self.message = f"Expected {expected} but found end of input."
+            else:
+                self.message = (
+                    f"Expected {expected} but found '{current_token.type}' "
+                    f"at line {current_token.line_no}, char {current_token.char_pos}"
+                )
         super().__init__(self.message)
 
 class SymbolTableEntry:
@@ -85,42 +86,28 @@ class SymbolTableEntry:
 class SymbolTable:
     def __init__(self):
         self.symbols = {}
-        self.scope_stack = []
 
-    def enter_scope(self):
-        self.scope_stack.append({})
-
-    def exit_scope(self):
-        self.scope_stack.pop()
-
-    def add(self, name, type, value=None, additional_info=None):
-        # Check if the variable has already been declared in the current scope
+    def declare(self, name, var_type):
         if name in self.symbols:
-            raise SyntaxError(f"Variable '{name}' is already declared.", self.current_token)
-        
-        if not value:
-            value = -1
-            print(f"Value: {value}")
-        self.symbols[name] = SymbolTableEntry(name, type, value, additional_info)
+            raise Exception(f"Error: Variable '{name}' already declared.")
+        self.symbols[name] = SymbolTableEntry(name, var_type)
 
-
-    def update(self, name, value=None):
-        # Check if the variable has been declared
+    def assign(self, name, value, value_type):
         if name not in self.symbols:
-            raise SyntaxError(f"Undeclared variable '{name}'", self.current_token)
+            raise Exception(f"Error: Variable '{name}' not declared.")
+        if self.symbols[name].type != value_type:
+            raise Exception(f"Type error: Cannot assign value of type {value_type} to variable '{name}' of type {self.symbols[name].type}.")
         self.symbols[name].value = value
 
     def lookup(self, name):
         return self.symbols.get(name)
 
-
     def print_table(self):
         print("Symbol Table:")
-        print(f"{'Name':<20} {'Type':<15} {'Value':<10} {'Additional Info':<20}")
-        print("-" * 65)
+        print(f"{'Name':<10} {'Type':<10} {'Value':<10}")
         for name, entry in self.symbols.items():
-            additional_info = entry.additional_info if entry.additional_info else ''
-            print(f"{entry.name:<20} {entry.type:<15} {entry.value:<10} {additional_info:<20}")
+            value = entry.value if entry.value is not None else ''
+            print(f"{name:<10} {entry.type:<10} {value:<10}")
 
 class Parser:
     def __init__(self, tokens):
@@ -134,7 +121,6 @@ class Parser:
         Advance to the next token in the stream.
         """
         self.current_token = next(self.tokens, None)
-        print(f"curr_token: {self.current_token}")
 
 
     def match(self, expected_type):
@@ -142,7 +128,7 @@ class Parser:
         Match the current token type against the expected type.
         """
         if self.current_token is None:
-            raise SyntaxError(f'Unexpected end of input, expected {expected_type}')
+            raise SyntaxError(f'Unexpected end of input, expected {expected_type}', None)
 
         if self.current_token.type == expected_type:
             self.get_next_token()  # Consume the token
@@ -159,21 +145,24 @@ class Parser:
             raise SyntaxError('Expected "+" or "-"', self.current_token)
 
     def term(self):
-        # term -> factor term-prime
-        factor_value = self.factor()
-        term_prime_value = self.term_prime()
-        # Combine factor and term-prime values
-        return (factor_value, term_prime_value)
+        left_value, left_type = self.factor()
+        right_value, right_type = self.term_prime(left_value, left_type)
+        # Type checking and value computation will be done inside term_prime
+        return right_value, right_type
 
-    def term_prime(self):
-        # term-prime -> mulop factor term-prime | epsilon
+    def term_prime(self, left_value, left_type):
         if self.current_token and self.current_token.type == 'MULOP':
-            mulop_value = self.mulop()
-            factor_value = self.factor()
-            term_prime_value = self.term_prime()
-            return (mulop_value, factor_value, term_prime_value)
+            operation = self.current_token.value
+            self.match('MULOP')
+            right_value, right_type = self.factor()
+            if left_type != right_type:
+                raise Exception(f"Type error: Cannot perform operation '{operation}' on types {left_type} and {right_type}.")
+            # Perform the operation and return the result and type
+            result_value = self.compute_mulop_result(operation, left_value, right_value)
+            return result_value, left_type
         else:
-            return None  # epsilon case
+            return left_value, left_type  # epsilon case; no operation to perform
+
 
     def mulop(self):
         # mulop -> * | /
@@ -185,33 +174,47 @@ class Parser:
             raise SyntaxError('Expected "*" or "/"', self.current_token)
 
     def factor(self):
-        # factor -> ( expression ) | var | NUM
         if self.current_token.type == 'LPAREN':
             self.match('LPAREN')
-            expr_value = self.expression()
+            value, type = self.expression()  # Assuming expression returns a value and its type
             self.match('RPAREN')
-            return expr_value
-        elif self.current_token.type in ['NUM', 'ID']:
+            return value, type
+        elif self.current_token.type == 'NUM':
             value = self.current_token.value
-            self.match(self.current_token.type)  # Consuming NUM or ID
-            return value
+            # Determine if the value is integer or float based on its content
+            type = 'int' if '.' not in value else 'float'
+            self.match('NUM')
+            return int(value) if type == 'int' else float(value), type
+        elif self.current_token.type == 'ID':
+            var_name, _ = self.var()  # var returns the variable name and array access if applicable
+            var_entry = self.symbol_table.lookup(var_name)
+            if var_entry is None:
+                raise SyntaxError(f"Undeclared variable '{var_name}'", None)
+            return var_entry.value, var_entry.type
         else:
             raise SyntaxError('Expected "(", variable, or number', self.current_token)
+        
     def expression(self):
-        # expression -> additive-expression expression-prime
-        additive_expression_value = self.additive_expression()
-        expression_prime_value = self.expression_prime()
-        return (additive_expression_value, expression_prime_value)
+        # Assume the additive_expression method now also returns a type
+        left_value, left_type = self.additive_expression()
+        right_value, right_type = self.expression_prime(left_type, left_value)  # Pass the left operand's type for type checking
+        # Type checking and value computation will be done inside expression_prime
+        return left_value, left_type  # This assumes expression_prime may modify left_value based on the right side
 
-    def expression_prime(self):
+    def expression_prime(self, left_type, left_value):
         # expression-prime -> relop additive-expression expression-prime | epsilon
         if self.current_token and self.current_token.type == 'RELOP':
-            relop_value = self.relop()
-            additive_expression_value = self.additive_expression()
-            expression_prime_value = self.expression_prime()
-            return (relop_value, additive_expression_value, expression_prime_value)
+            relop = self.current_token.value
+            self.match('RELOP')
+            right_value, right_type = self.additive_expression()
+            # Perform type checking and compute the result value
+            if left_type != right_type:
+                raise Exception(f"Type error: Cannot perform '{relop}' operation between types {left_type} and {right_type}.")
+            # Compute the result based on the relop and return it with the type
+            result_value = self.compute_relop_result(relop, left_type, left_value, right_value)
+            return result_value, left_type
         else:
-            return None  # epsilon case
+            return None, left_type # epsilon case
 
     def relop(self):
         # relop -> <= | < | > | >= | == | !=
@@ -223,20 +226,26 @@ class Parser:
             raise SyntaxError('Expected relational operator', self.current_token)
 
     def additive_expression(self):
-        # additive-expression -> term additive-expression-prime
-        term_value = self.term()
-        additive_expression_prime_value = self.additive_expression_prime()
-        return (term_value, additive_expression_prime_value)
+        # Assume the term method now also returns a type
+        left_value, left_type = self.term()
+        right_value, right_type = self.additive_expression_prime(left_value, left_type)  # Pass the left operand's type for type checking
+        # Type checking and value computation will be done inside additive_expression_prime
+        return left_value, left_type
 
-    def additive_expression_prime(self):
+    def additive_expression_prime(self, left_value, left_type):
         # additive-expression-prime -> addop term additive-expression-prime | epsilon
         if self.current_token and self.current_token.type == 'ADDOP':
-            addop_value = self.addop()
-            term_value = self.term()
-            additive_expression_prime_value = self.additive_expression_prime()
-            return (addop_value, term_value, additive_expression_prime_value)
+            addop = self.current_token.value
+            self.match('ADDOP')
+            right_value, right_type = self.term()
+            # Perform type checking and compute the result value
+            if left_type != right_type:
+                raise Exception(f"Type error: Cannot perform '{addop}' operation between types {left_type} and {right_type}.")
+            # Compute the result based on the addop and return it with the type
+            result_value = self.compute_addop_result(addop, left_type, left_value, right_value)
+            return result_value, left_type
         else:
-            return None  # epsilon case
+            return None, left_type
     
     def selection_statement_prime(self):
         # selection-statement-prime -> epsilon | else statement
@@ -254,7 +263,6 @@ class Parser:
         expression_value = self.expression()
         self.match('RPAREN')
         statement_value = self.statement()
-        self.match('SEMI')
         return ('WHILE', expression_value, statement_value)
 
     def add_variable_declaration(self, var_name, var_type, additional_info=None):
@@ -265,24 +273,43 @@ class Parser:
 
     def assignment_statement(self):
         var_name, var_prime_value = self.var()
-        # Check if the variable has been declared
         var_entry = self.symbol_table.lookup(var_name)
         if var_entry is None:
-            raise SyntaxError(f"Undeclared variable '{var_name}'", self.current_token)
-            
+            raise SyntaxError(f"Undeclared variable '{var_name}'", self.current_token, custom_message=f"Undeclared variable '{var_name}'")
         self.match('ASSIGN')
-        expression_value = self.expression()
-        self.symbol_table.update(var_name, value=expression_value)
-        print(f"Symbol table updated: {var_name} = {self.symbol_table.lookup(var_name).value}")
+        expression_value, expression_type = self.expression()
+        
+        # Convert token values to the proper type if necessary
+        if expression_type == 'int':
+            expression_value = int(expression_value)
+        elif expression_type == 'float':
+            expression_value = float(expression_value)
+        
+        # Check if the variable type matches the expression type
+        if var_entry.type != expression_type:
+            raise Exception(f"Type error: Cannot assign value of type {expression_type} to variable '{var_name}' of type {var_entry.type}.")
+
+        # Update the symbol table with the new value
+        self.symbol_table.assign(var_name, expression_value, expression_type)
         self.match('SEMI')
-        return ('ASSIGN', var_name, var_prime_value, expression_value)
+        
+        # Return the assignment result in a structured way
+        return {
+            'statement_type': 'assignment',
+            'variable': var_name,
+            'value': expression_value,
+            'value_type': expression_type
+        }
 
     def var(self):
         if self.current_token.type == 'ID':
             var_name = self.current_token.value
+            var_entry = self.symbol_table.lookup(var_name)
+            if var_entry is None:
+                raise SyntaxError(f"Undeclared variable '{var_name}'", self.current_token, custom_message=f"Undeclared variable '{var_name}'")
             self.match('ID')
             var_prime_value = self.var_prime()
-            return var_name, var_prime_value
+            return var_name, var_entry.type
         else:
             raise SyntaxError('Expected identifier', self.current_token)
 
@@ -329,12 +356,10 @@ class Parser:
         elif self.current_token.type == 'WHILE':  # start of iteration-statement
             return self.iteration_statement()
         else:
-            raise SyntaxError('Unrecognized statement', self.current_token)
+            raise SyntaxError('Unrecognized statement', self.current_token, custom_message=f"Unrecognized statement '{self.current_token.value}'")
 
     def selection_statement(self):
         # selection-statement -> if (expression ) statement selection-statement-prime
-
-        print(f"Selection stmt")
         self.match('IF')
         self.match('LPAREN')
         expression_value = self.expression()
@@ -346,7 +371,7 @@ class Parser:
     def type_specifier(self):
         # type-specifier -> int | float
         if self.current_token.type =="TYPE":
-            type_spec = self.current_token.type
+            type_spec = self.current_token.value
             self.match(self.current_token.type)
             return type_spec
         else:
@@ -418,6 +443,7 @@ class Parser:
         type_spec = self.type_specifier()
         var_name = self.current_token.value
         self.match('ID')
+        self.symbol_table.declare(var_name, type_spec)
         var_decl_prime_value = self.var_declaration_prime()
         
         # Check if var_decl_prime_value is a dictionary with an 'ARRAY_SIZE' key
@@ -426,7 +452,7 @@ class Parser:
             array_size = var_decl_prime_value['ARRAY_SIZE']
         
         # Add the variable to the symbol table
-        self.symbol_table.add(var_name, type_spec, additional_info=array_size)
+        # self.symbol_table.add(var_name, type_spec, additional_info=array_size)
         
         return {'TYPE': type_spec, 'ID': var_name, 'VAR_DECL_PRIME': var_decl_prime_value}
 
@@ -445,13 +471,59 @@ class Parser:
             return {'ARRAY_SIZE': num_value}
         else:
             raise SyntaxError('Expected ";" or "["', self.current_token)
+    
+
+    def compute_relop_result(self, relop, operand_type, left_value, right_value):
+        # Ensure that both operands are of the same type for simplicity
+        if operand_type != type(left_value).__name__ or operand_type != type(right_value).__name__:
+            raise Exception("Type error: Operand types do not match in relational operation.")
         
+        # Evaluate the relational operation
+        if relop == '==':
+            return left_value == right_value
+        elif relop == '!=':
+            return left_value != right_value
+        elif relop == '<':
+            return left_value < right_value
+        elif relop == '<=':
+            return left_value <= right_value
+        elif relop == '>':
+            return left_value > right_value
+        elif relop == '>=':
+            return left_value >= right_value
+        else:
+            raise Exception(f"Unknown relational operator {relop}")
+
+    def compute_addop_result(self, addop, operand_type, left_value, right_value):
+        # Ensure that both operands are of the same type for simplicity
+        if operand_type != type(left_value).__name__ or operand_type != type(right_value).__name__:
+            raise Exception("Type error: Operand types do not match in addition operation.")
+        
+        # Evaluate the addition/subtraction operation
+        if addop == '+':
+            return left_value + right_value
+        elif addop == '-':
+            return left_value - right_value
+        else:
+            raise Exception(f"Unknown addition operator {addop}")
+
+
+    def compute_mulop_result(self, operation, left_value, right_value):
+        # Perform the multiplication or division based on the operation
+        if operation == '*':
+            return left_value * right_value
+        elif operation == '/':
+            # Handle division by zero and float division
+            if right_value == 0:
+                raise Exception("Runtime error: Division by zero.")
+            return left_value / right_value
+        else:
+            raise Exception(f"Unknown multiplication operator {operation}")
+
     def parse(self):
         # This is the entry point of the parser
         try:
-            self.symbol_table.enter_scope()  # Start in the global scope
             self.program()
-            self.symbol_table.exit_scope()
             print("Parsing successful.")
             # Print the symbol table
             self.symbol_table.print_table()
@@ -461,7 +533,6 @@ class Parser:
             return False
 
 
-
 if __name__ == "__main__":
 
     code = """
@@ -469,7 +540,7 @@ if __name__ == "__main__":
 
     int a;
     int b;
-    float c;
+    int c;
 
     a = 10;
     b = 20;
@@ -482,13 +553,6 @@ if __name__ == "__main__":
     """
     
     tokens = list(lexer(code))
-
-    # ##### PRINT TOKENS #####
-    # for token in tokens:
-    # 	print(token)
-
     ##### PARSE #####
-
-
     parser = Parser(tokens)
     parser.parse()
